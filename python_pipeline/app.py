@@ -15,6 +15,8 @@ import subprocess
 import sys
 import json
 import hashlib
+import os
+import tempfile
 from pathlib import Path
 
 # Try to import plotly, make it optional
@@ -69,29 +71,28 @@ from pmtct_tracker import calculate_seroconversion_metrics, calculate_pmtct_five
 from annotation_manager import AnnotationManager
 from ner_evaluation import NEREvaluator
 
-# Path to real data directory
-# Configuration - Check dashboard directory first, then fall back to D:\sarah
+# Data and pipeline paths remain relative to the deployed project.
 LOCAL_DATA_DIR = Path(__file__).parent
-PROJECT_DATA_DIR = Path(r"D:\sarah")
-DATA_DIR = (
-    PROJECT_DATA_DIR
-    if (PROJECT_DATA_DIR / "COMBINE_MOH_333_3replaced_KCHR.xlsx").exists()
-    else LOCAL_DATA_DIR
-)
+PROJECT_DATA_DIR = LOCAL_DATA_DIR.parent
+DATA_DIR = LOCAL_DATA_DIR
+
+def find_data_file(filename):
+    """Find a register beside this app or in the project root."""
+    candidates = (LOCAL_DATA_DIR / filename, PROJECT_DATA_DIR / filename)
+    return next((path for path in candidates if path.is_file()), candidates[0])
 
 # Data source files
-MATERNITY_FILE = DATA_DIR / "COMBINE_MOH_333_3replaced_KCHR.xlsx"
-ANC_FILE_1 = DATA_DIR / "MOH_405_ANC final JAN 2026.xlsx"
-ANC_FILE_2 = DATA_DIR / "MOH_405_ANC_20 version 2.xlsx"
-UNDER5_FILE = DATA_DIR / "MOH_204A_UNDER5 revised version on jan 2026.xlsx"
+MATERNITY_FILE = find_data_file("COMBINE_MOH_333_3replaced_KCHR.xlsx")
+ANC_FILE_1 = find_data_file("MOH_405_ANC final JAN 2026.xlsx")
+ANC_FILE_2 = find_data_file("MOH_405_ANC_20 version 2.xlsx")
+UNDER5_FILE = find_data_file("MOH_204A_UNDER5 revised version on jan 2026.xlsx")
 ANNOTATION_DATASETS = [
     ("Maternity Register", "maternity", MATERNITY_FILE),
     ("ANC Register 1", "anc1", ANC_FILE_1),
     ("ANC Register 2", "anc2", ANC_FILE_2),
     ("Under-5 Register", "under5", UNDER5_FILE)
 ]
-# Script path - check local directory first, then fall back to D:\sarah
-SCRIPT_PATH = LOCAL_DATA_DIR / "run_notebook.py" if (LOCAL_DATA_DIR / "run_notebook.py").exists() else Path(r"D:\sarah\run_notebook.py")
+SCRIPT_PATH = LOCAL_DATA_DIR / "run_notebook.py"
 
 def run_bert_llm_kg_pipeline():
     """
@@ -132,16 +133,31 @@ def run_bert_llm_kg_pipeline():
                 step_text = "\n".join([f"{'✅' if j <= i else '⬜'} {s}" for j, s in enumerate(steps)])
                 step_placeholder.markdown(step_text)
         
-        # Run the script with UTF-8 encoding
-        result = subprocess.run(
-            [sys.executable, str(SCRIPT_PATH)],
-            cwd=SCRIPT_PATH.parent,
-            capture_output=True,
-            text=True,
-            encoding='utf-8',
-            errors='replace',
-            timeout=600  # 10 minutes timeout
-        )
+        # Make uploaded data available to the subprocess without persisting it.
+        with tempfile.TemporaryDirectory(prefix="mch_pipeline_") as temp_dir:
+            env = os.environ.copy()
+            if (
+                st.session_state.get("data_source") == "uploaded"
+                and st.session_state.get("current_df") is not None
+            ):
+                maternity_upload = Path(temp_dir) / "maternity_upload.xlsx"
+                st.session_state.current_df.to_excel(
+                    maternity_upload,
+                    index=False,
+                    engine="openpyxl"
+                )
+                env["MCH_MATERNITY_FILE"] = str(maternity_upload)
+
+            result = subprocess.run(
+                [sys.executable, str(SCRIPT_PATH)],
+                cwd=SCRIPT_PATH.parent,
+                env=env,
+                capture_output=True,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                timeout=600  # 10 minutes timeout
+            )
         
         if result.returncode == 0:
             st.success("✅ BERT-LLM-KG pipeline completed successfully!")

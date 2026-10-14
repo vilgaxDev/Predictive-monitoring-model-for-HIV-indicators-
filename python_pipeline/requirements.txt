@@ -4,6 +4,7 @@ numpy
 openpyxl
 transformers
 torch
+torchvision
 matplotlib
 seaborn
 networkx
