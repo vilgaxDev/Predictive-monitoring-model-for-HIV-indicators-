@@ -28,7 +28,6 @@ venv/
 annotations/
 images/
 *.json
-*.txt
 
 # Local development
 .DS_Store
