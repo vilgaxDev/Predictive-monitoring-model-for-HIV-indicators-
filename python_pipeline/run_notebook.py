@@ -27,27 +27,54 @@ print("="*50)
 print("LOADING ALL MATERNAL-CHILD HEALTH DATASETS")
 print("="*50)
 
-# Define file paths
-DATA_DIR = "D:\\sarah"
+# Resolve source files from an explicit environment path, the script directory,
+# or the project root (useful when deployed datasets are stored outside the app).
+DATA_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.dirname(DATA_DIR)
+
+
+def resolve_data_file(filename, environment_variable):
+    configured_path = os.environ.get(environment_variable)
+    candidates = [configured_path] if configured_path else []
+    candidates.extend([
+        os.path.join(DATA_DIR, filename),
+        os.path.join(PROJECT_DIR, filename)
+    ])
+    resolved = next((path for path in candidates if os.path.isfile(path)), candidates[-1])
+    return resolved, candidates
+
+
 files = {
-    'maternity': os.path.join(DATA_DIR, "COMBINE_MOH_333_3replaced_KCHR.xlsx"),
-    'anc': os.path.join(DATA_DIR, "MOH_405_ANC final JAN 2026.xlsx"),
-    'under5': os.path.join(DATA_DIR, "MOH_204A_UNDER5 revised version on jan 2026.xlsx")
+    'maternity': resolve_data_file(
+        "COMBINE_MOH_333_3replaced_KCHR.xlsx",
+        "MCH_MATERNITY_FILE"
+    ),
+    'anc': resolve_data_file(
+        "MOH_405_ANC final JAN 2026.xlsx",
+        "MCH_ANC_FILE"
+    ),
+    'under5': resolve_data_file(
+        "MOH_204A_UNDER5 revised version on jan 2026.xlsx",
+        "MCH_UNDER5_FILE"
+    )
 }
 
 # Load all datasets
 datasets = {}
-for name, filepath in files.items():
+for name, (filepath, candidates) in files.items():
     if os.path.exists(filepath):
         print(f"\nLoading {name.upper()} from: {filepath}")
         try:
-            datasets[name] = pd.read_excel(filepath, engine="openpyxl")
+            if filepath.lower().endswith(".csv"):
+                datasets[name] = pd.read_csv(filepath)
+            else:
+                datasets[name] = pd.read_excel(filepath, engine="openpyxl")
             print(f"[OK] Loaded {len(datasets[name])} records")
         except Exception as e:
             print(f"[ERROR] Error loading {name}: {e}")
             datasets[name] = None
     else:
-        print(f"[ERROR] File not found: {filepath}")
+        print(f"[ERROR] File not found for {name}: tried {candidates}")
         datasets[name] = None
 
 print(f"\n[OK] Successfully loaded {sum(1 for v in datasets.values() if v is not None)} datasets")
@@ -55,7 +82,12 @@ print(f"\n[OK] Successfully loaded {sum(1 for v in datasets.values() if v is not
 # Use maternity data as primary for detailed analysis
 df = datasets.get('maternity')
 if df is None:
-    raise ValueError("Maternity data not found. Please check the file path.")
+    raise FileNotFoundError(
+        "Maternity data was not found. Upload a maternity-compatible register "
+        "in the dashboard, set MCH_MATERNITY_FILE, or place "
+        "'COMBINE_MOH_333_3replaced_KCHR.xlsx' beside run_notebook.py or "
+        "in the project root."
+    )
 
 print(f"\nPrimary dataset for analysis: Maternity ({len(df)} records)")
 print(f"Processing 100% of data - no sampling")

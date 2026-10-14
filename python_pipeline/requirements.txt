@@ -3,6 +3,7 @@ pandas
 numpy
 openpyxl
 transformers
+torch
 matplotlib
 seaborn
 networkx
