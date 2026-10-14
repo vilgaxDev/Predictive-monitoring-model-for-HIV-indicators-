@@ -1,0 +1,34 @@
+# Excel files with real patient data
+*.xlsx
+*.xls
+
+# Jupyter notebooks (development/legacy)
+*.ipynb
+
+# Original scripts outside dashboard (development only)
+# Keep dashboard/run_notebook.py which is used by the app
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
+.venv/
+venv/
+
+# Streamlit cache
+.streamlit/
+
+# IDE
+.vscode/
+.idea/
+
+# Generated data files
+annotations/
+images/
+*.json
+*.txt
+
+# Local development
+.DS_Store

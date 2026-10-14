@@ -1,0 +1,6 @@
+{
+  "name": "AfyaBora Maternal & Neonatal Health AI",
+  "description": "Ethical, explainable AI predictive monitoring dashboard for maternal and neonatal health risks, HIV seroconversion, and PMTCT outcomes using Kenyan ANC, Maternity, PNC, and MOH 206 health records.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
