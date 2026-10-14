@@ -1,4 +1,12 @@
 # Excel files with real patient data
+# Allow specific data files for deployment
+!COMBINE_MOH_333_3replaced_KCHR.xlsx
+!MOH_405_ANC final JAN 2026.xlsx
+!MOH_405_ANC_20 version 2.xlsx
+!MOH_204A_UNDER5 revised version on jan 2026.xlsx
+!anonymized_data_kg_export.xlsx
+
+# Exclude other Excel files
 *.xlsx
 *.xls
 
