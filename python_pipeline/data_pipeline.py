@@ -19,6 +19,37 @@ import re
 from pathlib import Path
 from typing import Dict, Tuple, List, Optional
 
+# Import Entity from ner_evaluation at module level to avoid circular import
+try:
+    from ner_evaluation import Entity
+except ImportError:
+    # Define Entity locally if import fails
+    from dataclasses import dataclass
+    @dataclass
+    class Entity:
+        text: str
+        label: str
+        start: int
+        end: int
+        def __hash__(self):
+            return hash((self.text, self.label, self.start, self.end))
+        def __eq__(self, other):
+            if not isinstance(other, Entity):
+                return False
+            return (self.text == other.text and 
+                    self.label == other.label and 
+                    self.start == other.start and 
+                    self.end == other.end)
+        @classmethod
+        def from_dict(cls, entity_dict: Dict) -> 'Entity':
+            """Create Entity from dictionary."""
+            return cls(
+                text=entity_dict['text'],
+                label=entity_dict['label'],
+                start=entity_dict['start'],
+                end=entity_dict['end']
+            )
+
 # Try to import transformers, make it optional
 try:
     from transformers import BertTokenizer
@@ -169,7 +200,6 @@ def improved_pii_detection(text: str) -> List[Dict]:
 
 def improved_pii_detection_entities(text: str):
     """Improved PII detection returning Entity objects for NER evaluation."""
-    from ner_evaluation import Entity
     detected = improved_pii_detection(text)
     entities = []
     for entity in detected:
