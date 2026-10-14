@@ -1,4 +1,4 @@
-# AfyaBora: AI-Powered Maternal and Neonatal Health Predictive Monitoring Dashboard
+# Predictive monitoring model for HIV indicators,
 
 A secure, ethical, explainable AI dashboard built for the Kenya Ministry of Health (MOH), County Health Management Teams (CHMT), researchers, and healthcare professionals to predict maternal and neonatal health risks, monitor HIV seroconversion, and evaluate PMTCT longitudinal outcomes.
 

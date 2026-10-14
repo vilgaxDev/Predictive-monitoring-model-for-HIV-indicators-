@@ -1297,6 +1297,12 @@ elif st.session_state.page == 'Detailed Metrics':
         st.write("- NER Evaluation Metrics")
         st.write("- Per-Entity Performance")
         st.write("- Overall Performance with Target Check")
+        
+        # Add button to run pipeline
+        st.markdown("---")
+        if st.button("🚀 Run BERT-LLM-KG Pipeline Now", type="primary"):
+            st.session_state.page = 'BERT-LLM-KG Pipeline'
+            st.rerun()
     else:
         try:
             with metrics_file.open("r", encoding="utf-8") as f:
@@ -1315,6 +1321,48 @@ elif st.session_state.page == 'Detailed Metrics':
                 col3.metric("F1 Score", f"{bert.get('f1', 0):.3f}")
                 col4.metric("Training Loss", f"{bert.get('training_loss', 0):.3f}")
                 col5.metric("Validation Loss", f"{bert.get('validation_loss', 0):.3f}")
+                
+                # Visualization
+                if PLOTLY_AVAILABLE:
+                    st.write("**Training Progress Visualization:**")
+                    
+                    # Metrics comparison chart
+                    metrics_data = {
+                        'Metric': ['Precision', 'Recall', 'F1 Score'],
+                        'Value': [bert.get('precision', 0), bert.get('recall', 0), bert.get('f1', 0)]
+                    }
+                    metrics_df = pd.DataFrame(metrics_data)
+                    
+                    fig_metrics = px.bar(
+                        metrics_df,
+                        x='Metric',
+                        y='Value',
+                        title='BERT Training Metrics',
+                        color='Value',
+                        color_continuous_scale='Viridis',
+                        range_y=[0, 1]
+                    )
+                    fig_metrics.update_layout(yaxis_title="Score", height=300)
+                    st.plotly_chart(fig_metrics, width='stretch')
+                    
+                    # Loss comparison
+                    loss_data = {
+                        'Type': ['Training Loss', 'Validation Loss'],
+                        'Value': [bert.get('training_loss', 0), bert.get('validation_loss', 0)]
+                    }
+                    loss_df = pd.DataFrame(loss_data)
+                    
+                    fig_loss = px.bar(
+                        loss_df,
+                        x='Type',
+                        y='Value',
+                        title='Training vs Validation Loss',
+                        color='Type',
+                        color_discrete_map={'Training Loss': '#3498db', 'Validation Loss': '#e74c3c'},
+                        height=300
+                    )
+                    fig_loss.update_layout(yaxis_title="Loss")
+                    st.plotly_chart(fig_loss, width='stretch')
                 
                 # Details
                 col1_d, col2_d = st.columns(2)
@@ -1345,6 +1393,29 @@ elif st.session_state.page == 'Detailed Metrics':
                 col2.metric("Invalid Sequences", bio.get('invalid_sequences', 0))
                 col3.metric("Mean Entity Length", f"{bio.get('mean_entity_length', 0):.2f}")
                 col4.metric("Error Rate", f"{bio.get('error_rate', 0):.3f}")
+                
+                # Visualization
+                if PLOTLY_AVAILABLE:
+                    st.write("**BIO Quality Visualization:**")
+                    
+                    bio_data = {
+                        'Metric': ['Entity Coverage', 'Error Rate'],
+                        'Value': [bio.get('entity_coverage', 0), bio.get('error_rate', 0)]
+                    }
+                    bio_df = pd.DataFrame(bio_data)
+                    
+                    fig_bio = px.bar(
+                        bio_df,
+                        x='Metric',
+                        y='Value',
+                        title='BIO Tagging Quality Metrics',
+                        color='Metric',
+                        color_discrete_map={'Entity Coverage': '#2ecc71', 'Error Rate': '#e74c3c'},
+                        range_y=[0, 1],
+                        height=300
+                    )
+                    fig_bio.update_layout(yaxis_title="Score")
+                    st.plotly_chart(fig_bio, width='stretch')
                 
                 # Quality assessment
                 st.write("**Quality Assessment:**")
@@ -1379,6 +1450,34 @@ elif st.session_state.page == 'Detailed Metrics':
                 col3.metric("F1 Score", f"{overall.get('f1', 0):.3f}")
                 col4.metric("Accuracy", f"{overall.get('accuracy', 0):.3f}")
                 
+                # Visualization
+                if PLOTLY_AVAILABLE:
+                    st.write("**Overall Performance Visualization:**")
+                    
+                    overall_data = {
+                        'Metric': ['Precision', 'Recall', 'F1 Score', 'Accuracy'],
+                        'Value': [
+                            overall.get('precision', 0),
+                            overall.get('recall', 0),
+                            overall.get('f1', 0),
+                            overall.get('accuracy', 0)
+                        ]
+                    }
+                    overall_df = pd.DataFrame(overall_data)
+                    
+                    fig_overall = px.bar(
+                        overall_df,
+                        x='Metric',
+                        y='Value',
+                        title='Overall NER Performance',
+                        color='Value',
+                        color_continuous_scale='RdYlGn',
+                        range_y=[0, 1],
+                        height=350
+                    )
+                    fig_overall.update_layout(yaxis_title="Score")
+                    st.plotly_chart(fig_overall, width='stretch')
+                
                 # Progress bars for each metric
                 st.write("**Performance Visualization:**")
                 col1_p, col2_p, col3_p = st.columns(3)
@@ -1396,6 +1495,26 @@ elif st.session_state.page == 'Detailed Metrics':
                 st.write("**Per-Entity Performance:**")
                 per_entity = ner.get('per_entity', {})
                 if per_entity:
+                    # Per-entity visualization
+                    if PLOTLY_AVAILABLE:
+                        entity_names = list(per_entity.keys())
+                        precision_vals = [per_entity[e].get('precision', 0) for e in entity_names]
+                        recall_vals = [per_entity[e].get('recall', 0) for e in entity_names]
+                        f1_vals = [per_entity[e].get('f1', 0) for e in entity_names]
+                        
+                        fig_entity = go.Figure()
+                        fig_entity.add_trace(go.Bar(name='Precision', x=entity_names, y=precision_vals))
+                        fig_entity.add_trace(go.Bar(name='Recall', x=entity_names, y=recall_vals))
+                        fig_entity.add_trace(go.Bar(name='F1', x=entity_names, y=f1_vals))
+                        fig_entity.update_layout(
+                            barmode='group',
+                            title='Per-Entity NER Performance',
+                            yaxis_title="Score",
+                            yaxis_range=[0, 1],
+                            height=400
+                        )
+                        st.plotly_chart(fig_entity, width='stretch')
+                    
                     for entity_name, entity_metrics in per_entity.items():
                         with st.expander(f"📊 {entity_name}"):
                             col1_e, col2_e, col3_e, col4_e = st.columns(4)
@@ -1446,6 +1565,28 @@ elif st.session_state.page == 'Detailed Metrics':
                 col2_s.metric("Total FP", f"{total_fp:,}")
                 col3_s.metric("Total FN", f"{total_fn:,}")
                 col4_s.metric("Total TN", f"{total_tn:,}")
+                
+                # Visualization of TP/FP/FN
+                if PLOTLY_AVAILABLE:
+                    summary_data = {
+                        'Category': ['True Positives', 'False Positives', 'False Negatives'],
+                        'Count': [total_tp, total_fp, total_fn]
+                    }
+                    summary_df = pd.DataFrame(summary_data)
+                    
+                    fig_summary = px.pie(
+                        summary_df,
+                        values='Count',
+                        names='Category',
+                        title='Classification Results Distribution',
+                        color_discrete_map={
+                            'True Positives': '#2ecc71',
+                            'False Positives': '#e74c3c',
+                            'False Negatives': '#f39c12'
+                        },
+                        height=400
+                    )
+                    st.plotly_chart(fig_summary, width='stretch')
             
             # Download metrics
             st.markdown("---")
