@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from transformers import BertTokenizer
 import matplotlib.pyplot as plt
 import os
@@ -6,6 +7,9 @@ import json
 import networkx as nx
 from collections import Counter
 import sys
+
+# Import advanced analytics
+from advanced_analytics import AdvancedHealthAnalytics
 
 # Preserve the launcher’s output encoding and replace characters it cannot encode.
 if sys.platform == 'win32':
@@ -30,7 +34,7 @@ print("="*50)
 # Resolve source files from an explicit environment path, the script directory,
 # or the project root (useful when deployed datasets are stored outside the app).
 DATA_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_DIR = os.path.dirname(DATA_DIR)
+PROJECT_DIR = r"D:\sarah"
 
 
 def resolve_data_file(filename, environment_variable):
@@ -58,6 +62,15 @@ files = {
         "MCH_UNDER5_FILE"
     )
 }
+
+# Also check uploads directory
+uploads_dir = os.path.join(DATA_DIR, "data_uploads")
+if os.path.exists(uploads_dir):
+    uploaded_files = [f for f in os.listdir(uploads_dir) if f.endswith(('.xlsx', '.xls', '.csv'))]
+    if uploaded_files:
+        print(f"\n[INFO] Found {len(uploaded_files)} uploaded file(s) in data_uploads directory:")
+        for uploaded_file in uploaded_files:
+            print(f"  - {uploaded_file}")
 
 # Load all datasets
 datasets = {}
@@ -226,40 +239,138 @@ def linearise_record_general(row):
 texts = df.apply(linearise_record_general, axis=1).tolist()
 
 # -----------------------------
-# 2. Define sensitive fields
+# 2. Define sensitive fields (IMPROVED for high recall)
 # -----------------------------
 entity_map = {
+    # Direct field mappings
     "Name": "NAME",
     "Village": "VILLAGE",
     "Admission_Number": "ADMISSION_NUMBER",
+    "Birth Notification Number": "PATIENT_ID",
+    "Delivery Conducted by": "PERSON",
+    
+    # Date fields (ALL dates are sensitive)
     "Date_of_Admission": "DATE",
+    "Date of LMP": "DATE",
+    "EDD": "DATE",
     "Date of Delivery": "DATE",
-    "Birth Notification Number": "ID",
-    "HIV Status (P/N/KP/U)": "HIV_STATUS"
+    "Discharge_date": "DATE",
+    "Maternal_deaths_audited": "DATE",
+    
+    # Location-related fields
+    "Village": "LOCATION",
+    "Village_Estate": "LOCATION",
+    
+    # Medical identifiers
+    "Admission_Number": "MEDICAL_ID",
+    "Birth Notification Number": "MEDICAL_ID",
+    
+    # Health status (sensitive health information)
+    "HIV Status (P/N/KP/U)": "HEALTH_STATUS",
+    "HIV_Test_Results": "HEALTH_STATUS",
+    "VDRL_RPR_Results": "HEALTH_STATUS",
+    
+    # Normalized variations for matching
+    "name": "NAME",
+    "village": "VILLAGE",
+    "admissionnumber": "ADMISSION_NUMBER",
+    "birthnotificationnumber": "PATIENT_ID",
+    "dateofadmission": "DATE",
+    "dateofdelivery": "DATE",
+    "date": "DATE",
+    "deliveryconductedby": "PERSON",
 }
 
-print(f"\nDetected PII fields: {list(entity_map.keys())}")
+print(f"\nDetected PII fields: {len(entity_map)} mappings for high recall detection")
 
 # -----------------------------
-# 3. Pre-tokenisation tagging
+# 3. Aggressive regex patterns for entity detection
+# -----------------------------
+import re
+
+AGGRESSIVE_ENTITY_PATTERNS = {
+    "NAME": [
+        r"[A-Z][a-z]+ [A-Z][a-z]+",  # First Last
+        r"[A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+",  # First M. Last
+        r"[A-Z][a-z]+-[A-Z][a-z]+",  # Hyphenated names
+        r"[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+",  # First Middle Last
+    ],
+    "DATE": [
+        r"\d{2}/\d{2}/\d{4}",  # DD/MM/YYYY
+        r"\d{4}-\d{2}-\d{2}",  # YYYY-MM-DD
+        r"\d{2}-\d{2}-\d{4}",  # DD-MM-YYYY
+        r"\d{1,2}/\d{1,2}/\d{2,4}",  # Flexible dates
+        r"\d{2}/\d{2}/\d{2}",  # DD/MM/YY
+    ],
+    "ID": [
+        r"\d{6,12}",  # 6-12 digit IDs
+        r"[A-Z]{2}\d{6}",  # Letter + digit combinations
+        r"\d{8}",  # 8-digit ID
+    ],
+    "LOCATION": [
+        r"[A-Z][a-z]+(?: [A-Z][a-z]+)*",  # Multi-word locations
+        r"[A-Z][a-z]+/[^|]+",  # Location with slashes
+    ],
+    "PHONE": [
+        r"\+?\d{10,15}",  # Phone numbers
+        r"\d{3}[-.\s]\d{3}[-.\s]\d{4}",  # Various phone formats
+    ],
+    "HEALTH_STATUS": [
+        r"[PNKU]",  # Single letter health codes
+        r"[PN]/[PN]",  # Paired health codes
+    ]
+}
+
+# -----------------------------
+# 4. Pre-tokenisation tagging (IMPROVED for high recall)
 # -----------------------------
 def tag_pre_tokenisation(text, entity_map):
+    """
+    Enhanced BIO tagging with aggressive entity detection for high recall.
+    Uses both field-based and regex-based detection.
+    """
     tokens = text.split()
     labels = []
     current_entity = None
+    
+    # First pass: field-based tagging
     for tok in tokens:
-        if tok.replace(":", "") in entity_map:
-            current_entity = entity_map[tok.replace(":", "")]
+        # Normalize token for matching (remove special chars, lowercase)
+        normalized_tok = tok.replace(":", "").replace("_", "").lower()
+        
+        # Check if token matches any field in entity map
+        matched_entity = None
+        for field, entity_type in entity_map.items():
+            normalized_field = field.replace("_", "").lower()
+            if normalized_tok == normalized_field or normalized_field in normalized_tok:
+                matched_entity = entity_type
+                break
+        
+        if matched_entity:
+            current_entity = matched_entity
             labels.append("O")
         elif tok in [":", "|"]:
             labels.append("O")
         elif current_entity:
-            if labels and labels[-1].startswith("B-") or labels[-1].startswith("I-"):
+            # Tag value tokens
+            if labels and (labels[-1].startswith("B-") or labels[-1].startswith("I-")):
                 labels.append(f"I-{current_entity}")
             else:
                 labels.append(f"B-{current_entity}")
         else:
             labels.append("O")
+    
+    # Second pass: regex-based aggressive detection for untagged entities
+    # This catches entities that might have been missed in field-based approach
+    for i, (tok, label) in enumerate(zip(tokens, labels)):
+        if label == "O" and tok not in [":", "|"]:
+            # Check if token matches any aggressive pattern
+            for entity_type, patterns in AGGRESSIVE_ENTITY_PATTERNS.items():
+                for pattern in patterns:
+                    if re.match(pattern, tok):
+                        labels[i] = f"B-{entity_type}"
+                        break
+    
     return tokens, labels
 
 # -----------------------------
@@ -541,46 +652,13 @@ print(f"Anonymized data exported to Excel: '{kg_excel_file}'")
 print(f"Records exported: {len(kg_df)}")
 print(f"Columns: {len(kg_df.columns)}")
 
-# -----------------------------
-# SIMULATED BERT TRAINING METRICS
-# -----------------------------
 print("\n" + "="*50)
-print("SIMULATED BERT TRAINING METRICS")
+print("ANONYMIZATION COMPLETE")
 print("="*50)
-print("Note: Simulating BERT fine-tuning process (requires GPU for actual training)")
-print("      This shows expected training metrics based on paper results")
-print("="*50)
-
-# Simulate training epochs
-epochs = 5
-training_loss = [0.85, 0.62, 0.41, 0.28, 0.19]
-validation_loss = [0.82, 0.58, 0.39, 0.31, 0.22]
-train_precision = [0.78, 0.85, 0.89, 0.92, 0.94]
-train_recall = [0.75, 0.83, 0.88, 0.91, 0.93]
-train_f1 = [0.76, 0.84, 0.88, 0.91, 0.93]
-
-print("\nTraining Progress:")
-print(f"{'Epoch':<10} {'Train Loss':<15} {'Val Loss':<15} {'Precision':<12} {'Recall':<12} {'F1 Score':<12}")
-print("-" * 85)
-for epoch in range(epochs):
-    print(f"{epoch+1:<10} {training_loss[epoch]:<15.4f} {validation_loss[epoch]:<15.4f} "
-          f"{train_precision[epoch]:<12.4f} {train_recall[epoch]:<12.4f} {train_f1[epoch]:<12.4f}")
-
-print("\nFinal Model Performance (Epoch 5):")
-print(f"Precision: {train_precision[-1]:.4f} ({train_precision[-1]*100:.2f}%)")
-print(f"Recall:    {train_recall[-1]:.4f} ({train_recall[-1]*100:.2f}%)")
-print(f"F1 Score:  {train_f1[-1]:.4f} ({train_f1[-1]*100:.2f}%)")
-print(f"Training Loss: {training_loss[-1]:.4f}")
-print(f"Validation Loss: {validation_loss[-1]:.4f}")
-
-print("\n" + "="*50)
-print("BERT TRAINING STATUS")
-print("="*50)
-print("[OK] Training process simulated successfully")
-print("[OK] Model converged (loss decreased from 0.85 to 0.19)")
-print("[OK] Final metrics exceed 90% target")
-print("[OK] Ready for real fine-tuning with GPU and labeled data")
-print("\nFor actual BERT fine-tuning, you will need:")
+print("[OK] Data anonymized successfully")
+print("[OK] Knowledge graph generated")
+print("[OK] Ready for advanced analytics")
+print("\nNote: For actual BERT fine-tuning with real metrics, you would need:")
 print("- Labeled training data (manually annotated entities)")
 print("- GPU with sufficient memory (8GB+ VRAM recommended)")
 print("- Training time: Several hours to days depending on dataset size")
@@ -638,176 +716,17 @@ for k, v in bio_metrics.items():
     print(f"{k}: {v}")
 
 # -----------------------------
-# NER EVALUATION METRICS (Precision, Recall, F1, Accuracy)
+# RULE-BASED ENTITY DETECTION
 # -----------------------------
 print("\n" + "="*50)
-print("NER EVALUATION METRICS (REALISTIC SIMULATION)")
+print("RULE-BASED ENTITY DETECTION")
 print("="*50)
-print("Note: Simulating realistic NER model performance")
-print("      (introducing 5-10% error rate typical of real NER models)")
+print("Using improved rule-based PII detection with regex patterns")
 print("="*50)
-
-import random
-random.seed(42)  # For reproducible results
-
-def simulate_ner_predictions(all_bio_labels, error_rate=0.08):
-    """
-    Simulate realistic NER predictions by introducing errors
-    error_rate: probability of introducing FP or FN errors
-    """
-    simulated_labels = []
-    for rec in all_bio_labels:
-        sim_rec = []
-        for tok, label in rec:
-            # Introduce realistic errors
-            if random.random() < error_rate:
-                # Randomly flip some labels to simulate model errors
-                if label.startswith('B-') or label.startswith('I-'):
-                    # Miss some entities (FN)
-                    if random.random() < 0.5:
-                        sim_rec.append((tok, 'O'))
-                    else:
-                        sim_rec.append((tok, label))
-                else:
-                    # False positives: mark some non-entities as entities
-                    if random.random() < 0.3:
-                        entity_type = random.choice(['NAME', 'DATE', 'ID'])
-                        sim_rec.append((tok, f'B-{entity_type}'))
-                    else:
-                        sim_rec.append((tok, label))
-            else:
-                sim_rec.append((tok, label))
-        simulated_labels.append(sim_rec)
-    return simulated_labels
-
-def calculate_ner_metrics(predicted_labels, ground_truth_labels, entity_types):
-    """
-    Calculate precision, recall, F1, and accuracy by comparing predictions vs ground truth
-    """
-    metrics_by_entity = {}
-    overall_tp = 0
-    overall_fp = 0
-    overall_fn = 0
-    overall_tn = 0
-
-    for entity_type in entity_types:
-        tp = 0  # True Positive: Correctly identified entity
-        fp = 0  # False Positive: Incorrectly identified as entity
-        fn = 0  # False Negative: Missed entity
-        tn = 0  # True Negative: Correctly identified as non-entity
-
-        for pred_rec, truth_rec in zip(predicted_labels, ground_truth_labels):
-            for (pred_tok, pred_label), (truth_tok, truth_label) in zip(pred_rec, truth_rec):
-                pred_is_entity = pred_label == f"B-{entity_type}" or pred_label == f"I-{entity_type}"
-                truth_is_entity = truth_label == f"B-{entity_type}" or truth_label == f"I-{entity_type}"
-
-                if pred_is_entity and truth_is_entity:
-                    tp += 1
-                elif pred_is_entity and not truth_is_entity:
-                    fp += 1
-                elif not pred_is_entity and truth_is_entity:
-                    fn += 1
-                elif not pred_is_entity and not truth_is_entity:
-                    tn += 1
-
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0
-
-        metrics_by_entity[entity_type] = {
-            "True Positives": tp,
-            "False Positives": fp,
-            "False Negatives": fn,
-            "True Negatives": tn,
-            "Precision": precision,
-            "Recall": recall,
-            "F1 Score": f1,
-            "Accuracy": accuracy
-        }
-
-        overall_tp += tp
-        overall_fp += fp
-        overall_fn += fn
-        overall_tn += tn
-
-    # Calculate overall metrics
-    overall_precision = overall_tp / (overall_tp + overall_fp) if (overall_tp + overall_fp) > 0 else 0
-    overall_recall = overall_tp / (overall_tp + overall_fn) if (overall_tp + overall_fn) > 0 else 0
-    overall_f1 = 2 * (overall_precision * overall_recall) / (overall_precision + overall_recall) if (overall_precision + overall_recall) > 0 else 0
-    overall_accuracy = (overall_tp + overall_tn) / (overall_tp + overall_tn + overall_fp + overall_fn) if (overall_tp + overall_tn + overall_fp + overall_fn) > 0 else 0
-
-    overall_metrics = {
-        "Precision": overall_precision,
-        "Recall": overall_recall,
-        "F1 Score": overall_f1,
-        "Accuracy": overall_accuracy
-    }
-
-    return metrics_by_entity, overall_metrics
-
-# Get entity types from your data
-entity_types = list(set([label.split('-')[1] for rec in all_bio_labels for _, label in rec if label.startswith('B-') or label.startswith('I-')]))
-
-# Simulate realistic NER predictions with 8% error rate
-print(f"\nSimulating NER predictions with 8% error rate...")
-simulated_predictions = simulate_ner_predictions(all_bio_labels, error_rate=0.08)
-
-# Calculate metrics by comparing predictions vs ground truth
-entity_metrics, overall_metrics = calculate_ner_metrics(simulated_predictions, all_bio_labels, entity_types)
-
-print("\n--- Per-Entity Metrics ---")
-for entity_type, metrics in entity_metrics.items():
-    print(f"\n{entity_type}:")
-    print(f"  Precision: {metrics['Precision']:.4f} ({metrics['Precision']*100:.2f}%)")
-    print(f"  Recall:    {metrics['Recall']:.4f} ({metrics['Recall']*100:.2f}%)")
-    print(f"  F1 Score:  {metrics['F1 Score']:.4f} ({metrics['F1 Score']*100:.2f}%)")
-    print(f"  Accuracy:  {metrics['Accuracy']:.4f} ({metrics['Accuracy']*100:.2f}%)")
-    print(f"  TP: {metrics['True Positives']}, FP: {metrics['False Positives']}, FN: {metrics['False Negatives']}, TN: {metrics['True Negatives']}")
-
-print("\n" + "="*50)
-print("OVERALL NER PERFORMANCE")
-print("="*50)
-print(f"Precision: {overall_metrics['Precision']:.4f} ({overall_metrics['Precision']*100:.2f}%)")
-print(f"Recall:    {overall_metrics['Recall']:.4f} ({overall_metrics['Recall']*100:.2f}%)")
-print(f"F1 Score:  {overall_metrics['F1 Score']:.4f} ({overall_metrics['F1 Score']*100:.2f}%)")
-print(f"Accuracy:  {overall_metrics['Accuracy']:.4f} ({overall_metrics['Accuracy']*100:.2f}%)")
-
-# Check if we met the 0.9 target
-print("\n" + "="*50)
-print("TARGET CHECK (0.9 / 90%)")
-print("="*50)
-target = 0.9
-print(f"Precision: {'[OK] PASS' if overall_metrics['Precision'] >= target else '[ERROR] FAIL'} ({overall_metrics['Precision']*100:.2f}%)")
-print(f"Recall:    {'[OK] PASS' if overall_metrics['Recall'] >= target else '[ERROR] FAIL'} ({overall_metrics['Recall']*100:.2f}%)")
-print(f"F1 Score:  {'[OK] PASS' if overall_metrics['F1 Score'] >= target else '[ERROR] FAIL'} ({overall_metrics['F1 Score']*100:.2f}%)")
-print(f"Accuracy:  {'[OK] PASS' if overall_metrics['Accuracy'] >= target else '[ERROR] FAIL'} ({overall_metrics['Accuracy']*100:.2f}%)")
-
-all_pass = all([
-    overall_metrics['Precision'] >= target,
-    overall_metrics['Recall'] >= target,
-    overall_metrics['F1 Score'] >= target,
-    overall_metrics['Accuracy'] >= target
-])
-
-print(f"\nOverall: {'[OK] ALL METRICS PASSED 90% TARGET!' if all_pass else '[ERROR] Some metrics below 90% target'}")
-
-# Save metrics for visualization
-ner_metrics_data = {
-    'Precision': overall_metrics['Precision'] * 100,
-    'Recall': overall_metrics['Recall'] * 100,
-    'F1 Score': overall_metrics['F1 Score'] * 100,
-    'Accuracy': overall_metrics['Accuracy'] * 100
-}
-
-with open(os.path.join(DATA_DIR, "ner_metrics.json"), "w", encoding="utf-8") as metrics_file:
-    json.dump({
-        "evaluation_type": "simulated",
-        "error_rate": 0.08,
-        "target": target,
-        "overall": overall_metrics,
-        "per_entity": entity_metrics
-    }, metrics_file, indent=2)
+print("[OK] Rule-based entity detection completed")
+print("[OK] Entities tagged for anonymization")
+print(f"[OK] Total records processed: {len(all_bio_labels)}")
+print(f"[OK] Total tokens tagged: {sum(len(rec) for rec in all_bio_labels)}")
 
 # -----------------------------
 # VISUALIZATIONS
@@ -909,25 +828,6 @@ ax.grid(True)
 plt.tight_layout()
 plt.savefig('analysis_graphs.png', dpi=300, bbox_inches='tight')
 print("Graphs saved as 'analysis_graphs.png'")
-plt.show()
-
-# NER Performance Metrics Graph
-plt.figure(figsize=(10, 6))
-metrics_names = list(ner_metrics_data.keys())
-metrics_values = list(ner_metrics_data.values())
-colors = ['#2ecc71' if v >= 90 else '#e74c3c' for v in metrics_values]
-bars = plt.bar(metrics_names, metrics_values, color=colors)
-plt.title('NER Performance Metrics (Target: 90%)', fontsize=14, fontweight='bold')
-plt.ylabel('Percentage (%)')
-plt.ylim(0, 100)
-plt.axhline(y=90, color='blue', linestyle='--', linewidth=2, label='Target (90%)')
-for bar, val in zip(bars, metrics_values):
-    plt.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 1, f'{val:.2f}%',
-             ha='center', va='bottom', fontweight='bold')
-plt.legend()
-plt.tight_layout()
-plt.savefig('ner_performance_metrics.png', dpi=300, bbox_inches='tight')
-print("NER performance metrics saved as 'ner_performance_metrics.png'")
 plt.show()
 
 # -----------------------------
@@ -1151,8 +1051,7 @@ print("[OK] Tokenisation (ALL records) - DONE")
 print("[OK] BIO Tagging (ALL records) - DONE")
 print("[OK] LLM Anonymization - DONE")
 print("[OK] Knowledge Graph Integration - DONE")
-print("[OK] Simulated BERT Training - DONE")
-print("[OK] NER Evaluation Metrics - DONE")
+print("[OK] Rule-Based Entity Detection - DONE")
 print("[OK] All Visualizations - DONE")
 print("\nComplete BERT-LLM-KG Framework Implemented!")
 
@@ -1164,7 +1063,7 @@ print("CLINICAL ANALYSIS")
 print("="*50)
 
 # Load original data for clinical analysis
-df_clinical = pd.read_excel(files["maternity"], engine="openpyxl")
+df_clinical = pd.read_excel(files["maternity"][0], engine="openpyxl")
 
 # -----------------------------
 # 1. HIGH-RISK PREGNANCY CLASSIFICATION
@@ -1433,3 +1332,114 @@ if len(maternal_deaths) > 0 and len(mortality_by_year) > 1:
     print("- maternal_mortality_trend.png")
 if len(neonatal_deaths) > 0 and len(neonatal_mortality_by_year) > 1:
     print("- neonatal_mortality_trend.png")
+
+# -----------------------------
+# ADVANCED ANALYTICS MODULE
+# -----------------------------
+print("\n" + "="*50)
+print("ADVANCED ANALYTICS")
+print("="*50)
+print("Running advanced analytics for risk classification, trend analysis, and mortality analysis...")
+
+# Initialize advanced analytics
+analytics = AdvancedHealthAnalytics()
+
+# 1. Risk Classification
+print("\n[1/3] Risk Classification Analysis...")
+df_with_risks = analytics.classify_all_risks(df)
+risk_summary = analytics.generate_risk_summary(df_with_risks)
+
+print(f"  Total pregnancies: {risk_summary['total_pregnancies']}")
+print(f"  High risk: {risk_summary['high_risk_count']} ({risk_summary['high_risk_percentage']:.1f}%)")
+print(f"  Moderate risk: {risk_summary['moderate_risk_count']} ({risk_summary['moderate_risk_percentage']:.1f}%)")
+print(f"  Low risk: {risk_summary['low_risk_count']} ({risk_summary['low_risk_percentage']:.1f}%)")
+print(f"  Critical priority: {risk_summary['critical_priority_count']}")
+
+# Save risk-classified data
+df_with_risks.to_excel("risk_classified_data.xlsx", index=False)
+print("  [OK] Saved: risk_classified_data.xlsx")
+
+# Save risk summary
+analytics.save_analytics_results(risk_summary, "risk_summary.json")
+print("  [OK] Saved: risk_summary.json")
+
+# 2. Time-Series Trend Analysis
+print("\n[2/3] Time-Series Trend Analysis...")
+
+# Analyze age trends over delivery dates
+if 'Date of Delivery' in df.columns:
+    age_trends = analytics.analyze_time_series_trends(df, 'Date of Delivery', 'Age', 'monthly')
+    print(f"  Age trends analyzed: {len(age_trends)} periods")
+    
+    # Save trends
+    trends_data = [{
+        'period': t.period,
+        'metric': t.metric,
+        'value': t.value,
+        'trend': t.trend,
+        'significance': t.significance
+    } for t in age_trends]
+    
+    with open("age_trends.json", "w", encoding="utf-8") as f:
+        json.dump(trends_data, f, indent=2)
+    print("  [OK] Saved: age_trends.json")
+
+# 3. Mortality Root-Cause Analysis
+print("\n[3/3] Mortality Root-Cause Analysis...")
+
+# Maternal mortality analysis
+maternal_drivers = analytics.analyze_mortality_drivers(df, 'maternal')
+print(f"  Maternal mortality drivers: {len(maternal_drivers)}")
+
+maternal_data = [{
+    'cause': d.cause,
+    'frequency': d.frequency,
+    'percentage': d.percentage,
+    'interventions': d.interventions,
+    'evidence_level': d.evidence_level,
+    'expected_reduction': d.expected_reduction
+} for d in maternal_drivers]
+
+with open("maternal_mortality_drivers.json", "w", encoding="utf-8") as f:
+    json.dump(maternal_data, f, indent=2)
+print("  [OK] Saved: maternal_mortality_drivers.json")
+
+# Neonatal mortality analysis
+neonatal_drivers = analytics.analyze_mortality_drivers(df, 'neonatal')
+print(f"  Neonatal mortality drivers: {len(neonatal_drivers)}")
+
+neonatal_data = [{
+    'cause': d.cause,
+    'frequency': d.frequency,
+    'percentage': d.percentage,
+    'interventions': d.interventions,
+    'evidence_level': d.evidence_level,
+    'expected_reduction': d.expected_reduction
+} for d in neonatal_drivers]
+
+with open("neonatal_mortality_drivers.json", "w", encoding="utf-8") as f:
+    json.dump(neonatal_data, f, indent=2)
+print("  [OK] Saved: neonatal_mortality_drivers.json")
+
+# Save comprehensive analytics report
+comprehensive_report = {
+    'risk_classification': risk_summary,
+    'maternal_mortality': maternal_data,
+    'neonatal_mortality': neonatal_data,
+    'timestamp': pd.Timestamp.now().isoformat()
+}
+
+with open("comprehensive_analytics_report.json", "w", encoding="utf-8") as f:
+    json.dump(comprehensive_report, f, indent=2, default=str)
+print("  [OK] Saved: comprehensive_analytics_report.json")
+
+print("\n" + "="*50)
+print("ADVANCED ANALYTICS COMPLETE")
+print("="*50)
+print("Generated analytics files:")
+print("- risk_classified_data.xlsx")
+print("- risk_summary.json")
+print("- age_trends.json")
+print("- maternal_mortality_drivers.json")
+print("- neonatal_mortality_drivers.json")
+print("- comprehensive_analytics_report.json")

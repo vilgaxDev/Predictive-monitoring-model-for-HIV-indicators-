@@ -81,89 +81,187 @@ def linearise_dataframe(df: pd.DataFrame) -> List[str]:
     """Convert entire DataFrame to linear text records."""
     return df.apply(linearise_record, axis=1).tolist()
 
-# Entity mapping for BIO tagging with patterns
+# Entity mapping for BIO tagging with patterns (IMPROVED for high recall)
 ENTITY_MAP = {
+    # Direct field mappings
     "Name": "NAME",
     "Village": "VILLAGE",
     "Admission_Number": "ADMISSION_NUMBER",
+    "Birth Notification Number": "PATIENT_ID",
+    "Delivery Conducted by": "PERSON",
+    
+    # Date fields (ALL dates are sensitive)
     "Date_of_Admission": "DATE",
-    "Date of Delivery": "DATE",
     "Date of LMP": "DATE",
     "EDD": "DATE",
-    "Birth Notification Number": "ID",
-    "HIV Status (P/N/KP/U)": "HIV_STATUS",
-    "Delivery Conducted by": "PERSON",
-    "villageestate": "VILLAGE",
+    "Date of Delivery": "DATE",
+    "Discharge_date": "DATE",
+    "Maternal_deaths_audited": "DATE",
+    
+    # Location-related fields
+    "Village": "LOCATION",
+    "Village_Estate": "LOCATION",
+    
+    # Medical identifiers
+    "Admission_Number": "MEDICAL_ID",
+    "Birth Notification Number": "MEDICAL_ID",
+    
+    # Health status (sensitive health information)
+    "HIV_Status": "HEALTH_STATUS",
+    "HIV_Test_Results": "HEALTH_STATUS",
+    "VDRL_RPR_Results": "HEALTH_STATUS",
+    
+    # Normalized variations for matching
+    "name": "NAME",
+    "village": "VILLAGE",
     "admissionnumber": "ADMISSION_NUMBER",
-    "birthnotificationnumber": "ID",
+    "birthnotificationnumber": "PATIENT_ID",
     "dateofadmission": "DATE",
     "dateofdelivery": "DATE",
-    "date": "DATE"
+    "date": "DATE",
+    "deliveryconductedby": "PERSON",
 }
 
-# Enhanced regex patterns for entity detection
+# Aggressive regex patterns for entity detection (IMPROVED for high recall)
 ENTITY_PATTERNS = {
     "NAME": [
         r"[A-Z][a-z]+ [A-Z][a-z]+",  # First Last
         r"[A-Z][a-z]+ [A-Z]\. [A-Z][a-z]+",  # First M. Last
+        r"[A-Z][a-z]+-[A-Z][a-z]+",  # Hyphenated names
+        r"[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+",  # First Middle Last
     ],
     "DATE": [
         r"\d{2}/\d{2}/\d{4}",  # DD/MM/YYYY
         r"\d{4}-\d{2}-\d{2}",  # YYYY-MM-DD
         r"\d{2}-\d{2}-\d{4}",  # DD-MM-YYYY
+        r"\d{1,2}/\d{1,2}/\d{2,4}",  # Flexible dates
+        r"\d{2}/\d{2}/\d{2}",  # DD/MM/YY
     ],
     "ID": [
+        r"\d{6,12}",  # 6-12 digit IDs
+        r"[A-Z]{2}\d{6}",  # Letter + digit combinations
         r"\d{8}",  # 8-digit ID
-        r"\d{6,10}",  # 6-10 digit ID
     ],
     "LOCATION": [
-        r"[A-Z][a-z]+(?: [A-Z][a-z]+)*",  # City names
+        r"[A-Z][a-z]+(?: [A-Z][a-z]+)*",  # Multi-word locations
+        r"[A-Z][a-z]+/[^|]+",  # Location with slashes
     ],
     "PHONE": [
         r"\+?\d{10,15}",  # Phone numbers
+        r"\d{3}[-.\s]\d{3}[-.\s]\d{4}",  # Various phone formats
+    ],
+    "HEALTH_STATUS": [
+        r"[PNKU]",  # Single letter health codes
+        r"[PN]/[PN]",  # Paired health codes
     ]
 }
 
 def tag_pre_tokenisation(text: str, entity_map: Dict) -> Tuple[List[str], List[str]]:
-    """Rule-based BIO tagging before BERT tokenization."""
+    """
+    Enhanced BIO tagging with aggressive entity detection for high recall.
+    Uses both field-based and regex-based detection.
+    """
     tokens = text.split()
     labels = []
     current_entity = None
+    
+    # First pass: field-based tagging
     for tok in tokens:
-        if tok.replace(":", "") in entity_map:
-            current_entity = entity_map[tok.replace(":", "")]
+        # Normalize token for matching (remove special chars, lowercase)
+        normalized_tok = tok.replace(":", "").replace("_", "").lower()
+        
+        # Check if token matches any field in entity map
+        matched_entity = None
+        for field, entity_type in entity_map.items():
+            normalized_field = field.replace("_", "").lower()
+            if normalized_tok == normalized_field or normalized_field in normalized_tok:
+                matched_entity = entity_type
+                break
+        
+        if matched_entity:
+            current_entity = matched_entity
             labels.append("O")
         elif tok in [":", "|"]:
             labels.append("O")
         elif current_entity:
-            if labels and labels[-1].startswith("B-") or labels[-1].startswith("I-"):
+            # Tag value tokens
+            if labels and (labels[-1].startswith("B-") or labels[-1].startswith("I-")):
                 labels.append(f"I-{current_entity}")
             else:
                 labels.append(f"B-{current_entity}")
         else:
             labels.append("O")
+    
+    # Second pass: regex-based aggressive detection for untagged entities
+    # This catches entities that might have been missed in field-based approach
+    for i, (tok, label) in enumerate(zip(tokens, labels)):
+        if label == "O" and tok not in [":", "|"]:
+            # Check if token matches any aggressive pattern
+            for entity_type, patterns in ENTITY_PATTERNS.items():
+                for pattern in patterns:
+                    if re.match(pattern, tok):
+                        labels[i] = f"B-{entity_type}"
+                        break
+    
     return tokens, labels
 
 def extract_entities_with_regex(text: str) -> List[Dict]:
-    """Extract entities using regex patterns for more accurate detection."""
+    """
+    Aggressive entity extraction combining field-based and regex detection.
+    Returns list of entities with labels, text, and positions.
+    """
     entities = []
     
-    # Extract based on field-value structure
+    # Field-based extraction with multiple variations
     for field_name, entity_type in ENTITY_MAP.items():
-        # Pattern: "field_name: value"
-        pattern = f"{field_name}: ([^|]+)"
-        matches = re.finditer(pattern, text, re.IGNORECASE)
-        for match in matches:
-            value = match.group(1).strip()
-            if value and value != "nan":
-                start = match.start(1)
-                end = match.end(1)
-                entities.append({
-                    "label": entity_type,
-                    "text": value,
-                    "start": start,
-                    "end": end
-                })
+        # Try multiple field name variations
+        variations = [
+            field_name,
+            field_name.replace("_", " "),
+            field_name.replace("_", ""),
+            field_name.lower(),
+            field_name.replace("_", " ").lower()
+        ]
+        
+        for variation in variations:
+            pattern = f"{variation}: ([^|]+)"
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                value = match.group(1).strip()
+                if value and value.lower() not in ["nan", "none", ""]:
+                    start = match.start(1)
+                    end = match.end(1)
+                    entities.append({
+                        "label": entity_type,
+                        "text": value,
+                        "start": start,
+                        "end": end
+                    })
+    
+    # Regex-based extraction for patterns not in field structure
+    for entity_type, patterns in ENTITY_PATTERNS.items():
+        for pattern in patterns:
+            matches = re.finditer(pattern, text)
+            for match in matches:
+                matched_text = match.group()
+                # Check if already covered
+                already_covered = False
+                for existing in entities:
+                    if (existing["start"] <= match.start() and 
+                        existing["end"] >= match.end()):
+                        already_covered = True
+                        break
+                
+                if not already_covered:
+                    entities.append({
+                        "label": entity_type,
+                        "text": matched_text,
+                        "start": match.start(),
+                        "end": match.end()
+                    })
+    
+    # Sort by position
+    entities.sort(key=lambda x: x["start"])
     
     return entities
 

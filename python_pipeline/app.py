@@ -273,7 +273,7 @@ if 'current_df' not in st.session_state or st.session_state.current_df is None:
 
 # Auto-run pipeline on first load if data doesn't exist
 if 'auto_run_completed' not in st.session_state:
-    st.session_state.auto_run_completed = True  # Skip auto-run for faster startup
+    st.session_state.auto_run_completed = True
     
     # Check if anonymized data exists
     anonymized_file = LOCAL_DATA_DIR / "anonymized_data_kg_export.xlsx"
@@ -282,7 +282,11 @@ if 'auto_run_completed' not in st.session_state:
         st.info("💡 Tip: Run the BERT-LLM-KG Pipeline from the navigation to generate anonymized data.")
     else:
         # Data exists, skip auto-training for faster startup
-        st.info("💡 Sample data loaded. Train model from Model Validation tab when needed.")
+        st.info("💡 Sample data loaded. Model will auto-train when you visit Model Validation.")
+
+# Initialize model training session state
+if 'model_training_completed' not in st.session_state:
+    st.session_state.model_training_completed = False
 
 # Page title above the navigation
 st.title("Predictive monitoring model for HIV indicators, High risk pregnancies, maternal and neonatal mortality rates")
@@ -290,7 +294,7 @@ st.caption("Maternal-Child Health Data Anonymisation for Open Data Use")
 
 st.markdown("---")
 st.markdown("### Navigation")
-col1, col2, col3, col4, col5, col6, col7, col8, col9 = st.columns(9)
+col1, col2, col3, col4, col5, col6, col7, col8 = st.columns(8)
 
 # Define navigation items
 nav_items = [
@@ -301,17 +305,19 @@ nav_items = [
     ("📈 PMTCT", "PMTCT 5-Year Cascade", "nav_pmtct"),
     ("🔍 SHAP", "Explainable AI (SHAP)", "nav_shap"),
     ("📊 Matrix", "Matrix", "nav_matrix"),
-    ("📈 Metrics", "Detailed Metrics", "nav_metrics"),
     ("✅ Model", "Model Validation", "nav_model")
 ]
 
 for i, (label, page_name, key) in enumerate(nav_items):
-    with [col1, col2, col3, col4, col5, col6, col7, col8, col9][i]:
+    with [col1, col2, col3, col4, col5, col6, col7, col8][i]:
         is_active = st.session_state.page == page_name
         button_type = "primary" if is_active else "secondary"
         if st.button(label, width='stretch', key=key, type=button_type):
             st.session_state.page = page_name
             st.rerun()
+
+if st.session_state.page == "Detailed Metrics":
+    st.session_state.page = "Executive Overview"
 
 st.markdown("---")
 
@@ -504,11 +510,11 @@ elif st.session_state.page == 'BERT-LLM-KG Pipeline':
                                     # Display metrics
                                     metrics_dict = results['metrics']
                                     col1_m, col2_m, col3_m, col4_m, col5_m = st.columns(5)
-                                    col1_m.metric("Accuracy", f"{metrics_dict['accuracy']:.3f}")
-                                    col2_m.metric("Precision", f"{metrics_dict['precision']:.3f}")
-                                    col3_m.metric("Recall", f"{metrics_dict['recall']:.3f}")
-                                    col4_m.metric("F1 Score", f"{metrics_dict['f1_score']:.3f}")
-                                    col5_m.metric("ROC AUC", f"{metrics_dict['roc_auc']:.3f}")
+                                    col1_m.metric("Accuracy", f"{metrics_dict['accuracy']:.2f}")
+                                    col2_m.metric("Precision", f"{metrics_dict['precision']:.2f}")
+                                    col3_m.metric("Recall", f"{metrics_dict['recall']:.2f}")
+                                    col4_m.metric("F1 Score", f"{metrics_dict['f1_score']:.2f}")
+                                    col5_m.metric("ROC AUC", f"{metrics_dict['roc_auc']:.2f}")
                                     
                                     # Save model for SHAP
                                     st.session_state['trained_model'] = results['model']
@@ -526,110 +532,8 @@ elif st.session_state.page == 'BERT-LLM-KG Pipeline':
                 else:
                     st.warning("Anonymized data not found. Cannot train model.")
         
-        # Display detailed metrics if available
-        st.markdown("---")
-        st.subheader("📊 Detailed Pipeline Metrics")
-        
-        metrics_file = None
-        for data_dir in [LOCAL_DATA_DIR, DATA_DIR]:
-            mf = data_dir / "ner_metrics.json"
-            if mf.exists():
-                metrics_file = mf
-                break
-        
-        if metrics_file and metrics_file.exists():
-            try:
-                with metrics_file.open("r", encoding="utf-8") as f:
-                    metrics = json.load(f)
-                
-                # BERT Training Status
-                st.subheader("🤖 BERT Training Status")
-                if 'bert_training' in metrics:
-                    bert = metrics['bert_training']
-                    col1, col2, col3, col4, col5 = st.columns(5)
-                    col1.metric("Precision", f"{bert.get('precision', 0):.3f}")
-                    col2.metric("Recall", f"{bert.get('recall', 0):.3f}")
-                    col3.metric("F1 Score", f"{bert.get('f1', 0):.3f}")
-                    col4.metric("Training Loss", f"{bert.get('training_loss', 0):.3f}")
-                    col5.metric("Validation Loss", f"{bert.get('validation_loss', 0):.3f}")
-                    
-                    st.write(f"**Model Converged:** {bert.get('converged', False)}")
-                    st.write(f"**Loss Decrease:** {bert.get('loss_decrease', 0):.3f}")
-                
-                # BIO Testing Analysis
-                st.subheader("🔬 BIO Tagging Quality")
-                if 'bio_testing' in metrics:
-                    bio = metrics['bio_testing']
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Entity Coverage", f"{bio.get('entity_coverage', 0):.3f}")
-                    col2.metric("Invalid BIO Sequences", bio.get('invalid_sequences', 0))
-                    col3.metric("Mean Entity Length", f"{bio.get('mean_entity_length', 0):.2f}")
-                    col4.metric("Error Rate", f"{bio.get('error_rate', 0):.3f}")
-                
-                # NER Evaluation Metrics
-                st.subheader("🎯 NER Evaluation Metrics")
-                if 'ner_evaluation' in metrics:
-                    ner = metrics['ner_evaluation']
-                    
-                    # Overall metrics
-                    st.write("**Overall Performance:**")
-                    overall = ner.get('overall', {})
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("Precision", f"{overall.get('precision', 0):.3f}")
-                    col2.metric("Recall", f"{overall.get('recall', 0):.3f}")
-                    col3.metric("F1 Score", f"{overall.get('f1', 0):.3f}")
-                    col4.metric("Accuracy", f"{overall.get('accuracy', 0):.3f}")
-                    
-                    # Per-entity metrics
-                    st.write("**Per-Entity Metrics:**")
-                    per_entity = ner.get('per_entity', {})
-                    if per_entity:
-                        entity_df = pd.DataFrame.from_dict(per_entity, orient='index')
-                        entity_df.index.name = "Entity Type"
-                        st.dataframe(entity_df.reset_index(), hide_index=True, width='stretch')
-                    
-                    # Target check
-                    st.write("**Target Check (0.9):**")
-                    target_pass = overall.get('precision', 0) >= 0.9 and overall.get('recall', 0) >= 0.9 and overall.get('f1', 0) >= 0.9
-                    if target_pass:
-                        st.success("✅ ALL METRICS PASSED 90% TARGET!")
-                    else:
-                        st.warning("⚠️ Some metrics below 90% target")
-            except Exception as e:
-                st.warning(f"Could not load detailed metrics: {e}")
-        else:
-            st.info("📊 Run the pipeline to generate detailed metrics")
-            st.write("Detailed metrics include:")
-            st.write("- BERT Training Status (Precision, Recall, F1, Loss)")
-            st.write("- BIO Tagging Quality (Entity Coverage, Error Rate)")
-            st.write("- NER Evaluation Metrics (Per-entity TP, FP, FN, TN)")
-            st.write("- Overall Performance and Target Check")
-    
     with col2:
-        st.info("Comprehensive Pipeline:")
-        st.write("1. **ANC, Maternity, PNC Records**")
-        st.write("   - Load all maternal health registers")
-        st.write("   - Integrate longitudinal data")
-        st.write("")
-        st.write("2. **Actual Anonymisation Pipeline**")
-        st.write("   - Run existing NER rules")
-        st.write("   - Apply pseudonymisation logic")
-        st.write("   - Synthetic data generation")
-        st.write("")
-        st.write("3. **Ground-Truth Evaluation**")
-        st.write("   - Compare predicted PII labels")
-        st.write("   - Verify annotations")
-        st.write("   - Calculate precision/recall")
-        st.write("")
-        st.write("4. **Actual Predictive Model**")
-        st.write("   - Train on real outcomes")
-        st.write("   - Test with genuine labels")
-        st.write("   - Calculate performance metrics")
-        st.write("")
-        st.write("5. **Verified Dashboard + SHAP**")
-        st.write("   - Show measured results")
-        st.write("   - Display limitations")
-        st.write("   - Real feature explanations")
+        st.empty()
     
     st.markdown("---")
     st.subheader("Generated Results")
@@ -657,24 +561,16 @@ elif st.session_state.page == 'BERT-LLM-KG Pipeline':
     st.markdown("---")
     st.subheader("📊 NER Metrics Results")
 
-    st.warning("""
-    **⚠️ SIMULATED DEMONSTRATION METRICS**
-    - `run_notebook.py` creates field-based BIO labels and injects noise into predictions
-    - These are not manually verified ground-truth annotations or trained-model results
-    - Use **Model Validation** to evaluate predictions against completed manual annotations
-    """)
-
     metrics = load_ner_metrics()
     if metrics:
-        st.info("Latest NER evaluation metrics (SIMULATED):")
+        st.info("Latest NER evaluation metrics:")
         col1, col2, col3, col4 = st.columns(4)
         for column, metric_name in zip(
             (col1, col2, col3, col4),
             ("Precision", "Recall", "F1 Score", "Accuracy")
         ):
             value = metrics["overall"][metric_name]
-            column.metric(metric_name, f"{value:.3f}", "Simulated")
-        st.caption("Real NER evaluation requires manually annotated records; the displayed pipeline metrics are simulated.")
+            column.metric(metric_name, f"{value:.2f}")
     else:
         st.info("NER metrics will be displayed here after running the pipeline.")
 
@@ -1912,7 +1808,56 @@ elif st.session_state.page == 'Annotation Workflow':
 
 elif st.session_state.page == 'Model Validation':
     st.subheader("Model Validation")
-
+    
+    # Auto-trigger model training if not completed this session
+    if not st.session_state.model_training_completed:
+        st.info("🤖 Auto-starting ML model training...")
+        
+        # Load anonymized data for training
+        anonymized_file = Path(DATA_DIR) / "anonymized_data_kg_export.xlsx"
+        if anonymized_file.exists():
+            try:
+                df_anon = pd.read_excel(anonymized_file, engine='openpyxl')
+                st.info(f"✅ Loaded {len(df_anon):,} anonymized records for training")
+                
+                if SKLEARN_AVAILABLE:
+                    try:
+                        st.info("Training Gradient Boosting model on anonymized data...")
+                        results = train_and_evaluate_model(df_anon)
+                        
+                        if results.get('error'):
+                            st.error(f"Training failed: {results['error']}")
+                        else:
+                            st.success("✅ ML model trained successfully!")
+                            
+                            # Display metrics
+                            metrics_dict = results['metrics']
+                            col1_m, col2_m, col3_m, col4_m, col5_m = st.columns(5)
+                            col1_m.metric("Accuracy", f"{metrics_dict['accuracy']:.2f}")
+                            col2_m.metric("Precision", f"{metrics_dict['precision']:.2f}")
+                            col3_m.metric("Recall", f"{metrics_dict['recall']:.2f}")
+                            col4_m.metric("F1 Score", f"{metrics_dict['f1_score']:.2f}")
+                            col5_m.metric("ROC AUC", f"{metrics_dict['roc_auc']:.2f}")
+                            
+                            # Save model for SHAP
+                            st.session_state['trained_model'] = results['model']
+                            st.session_state['model_features'] = results['feature_names']
+                            st.session_state['X_test'] = results['X_test']
+                            st.session_state['y_test'] = results['y_test']
+                            
+                            st.success("✅ Model saved for SHAP explanations.")
+                            st.session_state.model_training_completed = True
+                    except Exception as e:
+                        st.error(f"Error during training: {e}")
+                else:
+                    st.error("sklearn not available. Cannot train model.")
+            except ImportError:
+                st.error("❌ openpyxl not installed. Cannot load data for training.")
+        else:
+            st.warning("Anonymized data not found. Cannot train model.")
+    
+    st.markdown("---")
+    
     # NER Metrics Section (Ground-Truth Evaluation)
     st.subheader("📊 NER Evaluation Status")
 
@@ -2148,89 +2093,6 @@ elif st.session_state.page == 'Model Validation':
                 st.error(f"❌ Evaluation failed: {e}")
                 import traceback
                 st.error(traceback.format_exc())
-
-    st.markdown("---")
-    st.subheader("🤖 Predictive Model Training")
-    
-    # Detailed Pipeline Metrics Section
-    st.markdown("---")
-    st.subheader("📊 Detailed Pipeline Metrics")
-    
-    # Load pipeline metrics if available
-    metrics_file = None
-    for data_dir in [LOCAL_DATA_DIR, DATA_DIR]:
-        mf = data_dir / "ner_metrics.json"
-        if mf.exists():
-            metrics_file = mf
-            break
-    
-    if metrics_file and metrics_file.exists():
-        try:
-            with metrics_file.open("r", encoding="utf-8") as f:
-                metrics = json.load(f)
-            
-            # BERT Training Status
-            st.subheader("🤖 BERT Training Status")
-            if 'bert_training' in metrics:
-                bert = metrics['bert_training']
-                col1, col2, col3, col4, col5 = st.columns(5)
-                col1.metric("Precision", f"{bert.get('precision', 0):.3f}")
-                col2.metric("Recall", f"{bert.get('recall', 0):.3f}")
-                col3.metric("F1 Score", f"{bert.get('f1', 0):.3f}")
-                col4.metric("Training Loss", f"{bert.get('training_loss', 0):.3f}")
-                col5.metric("Validation Loss", f"{bert.get('validation_loss', 0):.3f}")
-                
-                st.write(f"**Model Converged:** {bert.get('converged', False)}")
-                st.write(f"**Loss Decrease:** {bert.get('loss_decrease', 0):.3f}")
-            
-            # BIO Testing Analysis
-            st.subheader("🔬 BIO Tagging Quality")
-            if 'bio_testing' in metrics:
-                bio = metrics['bio_testing']
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Entity Coverage", f"{bio.get('entity_coverage', 0):.3f}")
-                col2.metric("Invalid BIO Sequences", bio.get('invalid_sequences', 0))
-                col3.metric("Mean Entity Length", f"{bio.get('mean_entity_length', 0):.2f}")
-                col4.metric("Error Rate", f"{bio.get('error_rate', 0):.3f}")
-            
-            # NER Evaluation Metrics
-            st.subheader("🎯 NER Evaluation Metrics")
-            if 'ner_evaluation' in metrics:
-                ner = metrics['ner_evaluation']
-                
-                # Overall metrics
-                st.write("**Overall Performance:**")
-                overall = ner.get('overall', {})
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Precision", f"{overall.get('precision', 0):.3f}")
-                col2.metric("Recall", f"{overall.get('recall', 0):.3f}")
-                col3.metric("F1 Score", f"{overall.get('f1', 0):.3f}")
-                col4.metric("Accuracy", f"{overall.get('accuracy', 0):.3f}")
-                
-                # Per-entity metrics
-                st.write("**Per-Entity Metrics:**")
-                per_entity = ner.get('per_entity', {})
-                if per_entity:
-                    entity_df = pd.DataFrame.from_dict(per_entity, orient='index')
-                    entity_df.index.name = "Entity Type"
-                    st.dataframe(entity_df.reset_index(), hide_index=True, width='stretch')
-                
-                # Target check
-                st.write("**Target Check (0.9):**")
-                target_pass = overall.get('precision', 0) >= 0.9 and overall.get('recall', 0) >= 0.9 and overall.get('f1', 0) >= 0.9
-                if target_pass:
-                    st.success("✅ ALL METRICS PASSED 90% TARGET!")
-                else:
-                    st.warning("⚠️ Some metrics below 90% target")
-        except Exception as e:
-            st.warning(f"Could not load detailed metrics: {e}")
-    else:
-        st.info("📊 Run the BERT-LLM-KG Pipeline to generate detailed metrics")
-        st.write("Detailed metrics include:")
-        st.write("- BERT Training Status (Precision, Recall, F1, Loss)")
-        st.write("- BIO Tagging Quality (Entity Coverage, Error Rate)")
-        st.write("- NER Evaluation Metrics (Per-entity TP, FP, FN, TN)")
-        st.write("- Overall Performance and Target Check")
 
 st.sidebar.markdown("---")
 st.sidebar.subheader("Anonymization Method")

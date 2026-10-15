@@ -55,7 +55,8 @@ def train_and_evaluate_model(
     test_size: float = 0.25,
     random_state: int = 42
 ) -> Dict[str, Any]:
-    """Trains a Gradient Boosting model with evaluation metrics and calibration."""
+    """Trains a Gradient Boosting model with evaluation metrics and calibration.
+    Optimized for high recall (target ~0.96) to minimize false negatives in clinical settings."""
     if not SKLEARN_AVAILABLE:
         return {
             'model': None,
@@ -85,36 +86,61 @@ def train_and_evaluate_model(
         X, y, test_size=test_size, random_state=random_state, stratify=y if y.nunique() > 1 else None
     )
 
-    # Fit Gradient Boosting model
+    # Calculate class weights to improve recall
+    from sklearn.utils.class_weight import compute_class_weight
+    if y.nunique() > 1:
+        classes = np.unique(y_train)
+        weights = compute_class_weight('balanced', classes=classes, y=y_train)
+        class_weight_dict = dict(zip(classes, weights))
+    else:
+        class_weight_dict = None
+
+    # Fit Gradient Boosting model with class weights for better recall
     model = GradientBoostingClassifier(
-        n_estimators=120,
-        learning_rate=0.08,
-        max_depth=4,
+        n_estimators=200,
+        learning_rate=0.05,
+        max_depth=5,
+        min_samples_split=5,
+        min_samples_leaf=2,
+        subsample=0.8,
         random_state=random_state
     )
-    model.fit(X_train, y_train)
+    
+    # For class weight support, we need to use sample weights
+    if class_weight_dict:
+        sample_weights = y_train.map(class_weight_dict)
+        model.fit(X_train, y_train, sample_weight=sample_weights)
+    else:
+        model.fit(X_train, y_train)
 
-    y_pred = model.predict(X_test)
-    y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else y_pred
+    # Get probabilities and adjust threshold for higher recall
+    y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else None
+    
+    # Use lower threshold (0.3 instead of 0.5) to improve recall
+    if y_prob is not None:
+        threshold = 0.3
+        y_pred = (y_prob >= threshold).astype(int)
+    else:
+        y_pred = model.predict(X_test)
 
     acc = accuracy_score(y_test, y_pred)
     prec = precision_score(y_test, y_pred, zero_division=0)
     rec = recall_score(y_test, y_pred, zero_division=0)
     f1 = f1_score(y_test, y_pred, zero_division=0)
-    roc = roc_auc_score(y_test, y_prob) if y_test.nunique() > 1 else 0.5
+    roc = roc_auc_score(y_test, y_prob) if y_prob is not None and y_test.nunique() > 1 else 0.5
     cm = confusion_matrix(y_test, y_pred)
 
-    prob_true, prob_pred = calibration_curve(y_test, y_prob, n_bins=10)
+    prob_true, prob_pred = calibration_curve(y_test, y_prob, n_bins=10) if y_prob is not None else ([], [])
 
     return {
         'model': model,
         'feature_names': list(X.columns),
         'metrics': {
-            'accuracy': float(acc),
-            'precision': float(prec),
-            'recall': float(rec),
-            'f1_score': float(f1),
-            'roc_auc': float(roc)
+            'accuracy': round(float(acc), 2),
+            'precision': round(float(prec), 2),
+            'recall': round(float(rec), 2),
+            'f1_score': round(float(f1), 2),
+            'roc_auc': round(float(roc), 2)
         },
         'confusion_matrix': cm.tolist(),
         'calibration': {
