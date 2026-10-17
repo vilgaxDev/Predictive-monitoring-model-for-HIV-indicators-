@@ -381,6 +381,48 @@ except Exception as e:
 try:
     st.sidebar.header("Data Source & Filters")
 
+    # Auto-load data on startup if not already loaded
+    if 'current_df' not in st.session_state or st.session_state.current_df is None:
+        st.sidebar.info("🔄 Auto-loading integrated data sources...")
+        
+        # Check available files
+        data_files = {
+            "Maternity Register": MATERNITY_FILE,
+            "ANC Register 1": ANC_FILE_1,
+            "ANC Register 2": ANC_FILE_2,
+            "Under-5 Register": UNDER5_FILE
+        }
+        
+        # Try to load from available files
+        loaded = False
+        for name, filepath in data_files.items():
+            if filepath.exists():
+                try:
+                    df_loaded = pd.read_excel(filepath, engine='openpyxl')
+                    st.session_state.current_df = df_loaded
+                    st.session_state.data_source = f"integrated ({name})"
+                    st.sidebar.success(f"✅ Auto-loaded {len(df_loaded):,} records from {name}")
+                    loaded = True
+                    break
+                except Exception as e:
+                    st.sidebar.warning(f"⚠️ Could not load {name}: {e}")
+        
+        # If no register files, try anonymized data
+        if not loaded:
+            sample_file = LOCAL_DATA_DIR / "anonymized_data_kg_export.xlsx"
+            if sample_file.exists():
+                try:
+                    df_sample = pd.read_excel(sample_file, engine='openpyxl')
+                    st.session_state.current_df = df_sample
+                    st.session_state.data_source = "integrated (anonymized)"
+                    st.sidebar.success(f"✅ Auto-loaded {len(df_sample):,} anonymized records")
+                    loaded = True
+                except Exception as e:
+                    st.sidebar.warning(f"⚠️ Could not load anonymized data: {e}")
+        
+        if not loaded:
+            st.sidebar.warning("⚠️ No integrated data found. Please upload a dataset.")
+
     data_source = st.sidebar.radio(
         "Data Input Mode",
         ["Upload Custom Dataset", "Use Integrated Data Sources"]
