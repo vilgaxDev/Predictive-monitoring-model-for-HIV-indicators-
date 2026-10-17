@@ -33,7 +33,7 @@ const TAB_TITLES: Record<string, string> = {
   'pmtct-outcomes': '5-Year PMTCT Pediatric Cascade',
   'explainable-ai': 'SHAP Model Explainability',
   'county-comparisons': 'Kenyan County Benchmarks',
-  'model-performance': 'Model Validation & Calibration',
+  'model-performance': 'Model Visualization',
   'data-governance': 'Data Quality & Audit Governance',
 };
 

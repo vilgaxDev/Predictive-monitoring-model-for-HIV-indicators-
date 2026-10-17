@@ -63,7 +63,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
       items: [
         { id: 'explainable-ai', label: 'SHAP Explainability', icon: Sparkles },
         { id: 'county-comparisons', label: 'County Benchmarks', icon: MapPin },
-        { id: 'model-performance', label: 'Model Validation', icon: CheckCircle2 },
+        { id: 'model-performance', label: 'Model Visualization', icon: CheckCircle2 },
       ],
     },
     {

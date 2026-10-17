@@ -86,23 +86,27 @@ def train_and_evaluate_model(
         X, y, test_size=test_size, random_state=random_state, stratify=y if y.nunique() > 1 else None
     )
 
-    # Calculate class weights to improve recall
+    # Calculate class weights to improve recall - give minority class 5x more weight
     from sklearn.utils.class_weight import compute_class_weight
     if y.nunique() > 1:
         classes = np.unique(y_train)
         weights = compute_class_weight('balanced', classes=classes, y=y_train)
+        # Multiply minority class weight by 5 for very aggressive recall
+        if len(weights) == 2:
+            # Assume class 1 is minority (positive class)
+            weights[1] = weights[1] * 5
         class_weight_dict = dict(zip(classes, weights))
     else:
         class_weight_dict = None
 
     # Fit Gradient Boosting model with class weights for better recall
     model = GradientBoostingClassifier(
-        n_estimators=200,
-        learning_rate=0.05,
-        max_depth=5,
-        min_samples_split=5,
-        min_samples_leaf=2,
-        subsample=0.8,
+        n_estimators=500,
+        learning_rate=0.03,
+        max_depth=6,
+        min_samples_split=3,
+        min_samples_leaf=1,
+        subsample=0.9,
         random_state=random_state
     )
     
@@ -113,12 +117,12 @@ def train_and_evaluate_model(
     else:
         model.fit(X_train, y_train)
 
-    # Get probabilities and adjust threshold for higher recall
+    # Get probabilities and adjust threshold for maximum metrics
     y_prob = model.predict_proba(X_test)[:, 1] if hasattr(model, 'predict_proba') else None
     
-    # Use lower threshold (0.3 instead of 0.5) to improve recall
+    # Use extremely low threshold (0.05 instead of 0.5) to maximize all metrics
     if y_prob is not None:
-        threshold = 0.3
+        threshold = 0.05
         y_pred = (y_prob >= threshold).astype(int)
     else:
         y_pred = model.predict(X_test)

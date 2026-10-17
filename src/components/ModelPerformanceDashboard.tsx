@@ -18,7 +18,7 @@ export const ModelPerformanceDashboard: React.FC<ModelPerformanceDashboardProps>
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-5 shadow-xs dark:shadow-none">
         <div className="flex items-center gap-2">
           <Activity className="w-5 h-5 text-teal-600 dark:text-teal-400" />
-          <h2 className="text-base font-bold text-slate-900 dark:text-white">Machine Learning Model Validation & Evaluation</h2>
+          <h2 className="text-base font-bold text-slate-900 dark:text-white">Model Visualization & Evaluation</h2>
         </div>
         <p className="text-xs text-slate-600 dark:text-slate-400 mt-1 max-w-4xl leading-relaxed">
           Trained on stratified Kenyan health cohorts using Gradient Boosting and Random Forest architectures. 
